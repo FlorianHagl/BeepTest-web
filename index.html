@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Beep Test">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1115">
+<title>Beep Test</title>
+<style>
+:root { --bg:#0f1115; --card:#1b1f27; --line:#2a303b; --text:#f2f4f8; --dim:#8b93a3; --accent:#3ddc84; --warn:#ffb020; --danger:#ff5d5d; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, system-ui, Roboto, sans-serif; }
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); min-height:100vh; }
+#app { max-width: 560px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 26px; margin: 8px 0 12px; }
+.dim { color: var(--dim); font-size: 14px; }
+.card { background: var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+.card h2 { font-size:18px; margin:0 0 4px; }
+.row { display:flex; gap:10px; margin-top:8px; align-items:center; }
+.row > * { flex:1; min-width:0; }
+button { font: inherit; font-weight:700; font-size:16px; border-radius:10px; padding:14px; border:1.5px solid var(--accent); background:var(--accent); color:#0b0d10; }
+button.o { background:transparent; color:var(--accent); }
+button.sm { padding:8px; font-size:14px; }
+button.c-text { border-color:var(--text); color:var(--text); }
+button.c-dim { border-color:var(--dim); color:var(--dim); }
+button.c-warn { border-color:var(--warn); color:var(--warn); }
+button.c-danger { border-color:var(--danger); color:var(--danger); }
+button.f-warn { background:var(--warn); border-color:var(--warn); color:#0b0d10; }
+label { display:block; color:var(--dim); font-size:12px; margin-bottom:4px; }
+input[type=text], input[type=number] { width:100%; font: inherit; font-size:16px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+.field { margin-bottom:10px; }
+.lv { display:grid; grid-template-columns: 28px 1fr 1fr 48px 32px; gap:6px; align-items:center; margin-bottom:6px; }
+.lv .x { color:var(--danger); font-size:20px; text-align:center; background:none; border:0; padding:0; }
+.center { text-align:center; padding: 12px 0; }
+.huge { font-size:110px; font-weight:800; line-height:1.05; }
+.big { font-size:30px; font-weight:700; }
+.mid { font-size:20px; margin-top:6px; }
+.lane { position:relative; height:56px; background:var(--card); border:1px solid var(--line); border-radius:6px; margin:12px 0 4px; }
+.lane i { position:absolute; top:0; bottom:0; background:var(--text); width:4px; }
+.lane i.t0 { left:0 } .lane i.t1 { right:0 }
+.lane i.c { background:var(--warn); width:3px; }
+.lane b { position:absolute; top:16px; width:24px; height:24px; border-radius:12px; background:var(--accent); margin-left:-12px; }
+.lbls { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); }
+.strip { display:flex; align-items:flex-end; height:44px; gap:2px; margin-top:10px; }
+.strip div { flex:1; border-radius:2px; }
+.check { display:flex; align-items:center; gap:10px; }
+.vol { font-size:30px; font-weight:700; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+
+/* ------------------------- Engine (wie src/engine.js) ------------------------- */
+
+const num = (s) => parseFloat(String(s).replace(',', '.'));
+const fmtTime = (sec) => {
+  const s = Math.max(0, Math.floor(sec));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+};
+
+function generateLevels({ startSpeed, step, levelSeconds, levelCount, distance }) {
+  const levels = [];
+  for (let i = 0; i < levelCount; i++) {
+    const speed = Math.round((startSpeed + step * i) * 100) / 100;
+    const shuttleTime = distance / (speed / 3.6);
+    levels.push({ speed, shuttles: Math.max(1, Math.round(levelSeconds / shuttleTime)) });
+  }
+  return levels;
+}
+
+function buildTimeline(seq) {
+  const cd = Math.max(0, Number(seq.countdown) || 0);
+  const dist = Number(seq.distance) || 20;
+  const events = [];
+  const segments = [];
+  for (let s = Math.min(3, cd); s >= 1; s--) events.push({ t: cd - s, type: 'tick' });
+  events.push({ t: cd, type: 'start' });
+  let t = cd, total = 0;
+  const lastLevel = seq.levels.length - 1;
+  seq.levels.forEach((lv, li) => {
+    const dur = dist / (lv.speed / 3.6);
+    for (let s = 0; s < lv.shuttles; s++) {
+      const start = t;
+      t += dur;
+      total += dist;
+      const lastOfLevel = s === lv.shuttles - 1;
+      const lastOverall = lastOfLevel && li === lastLevel;
+      segments.push({ index: segments.length + 1, start, end: t, level: li + 1, shuttle: s + 1,
+        shuttles: lv.shuttles, speed: lv.speed, distanceEnd: total });
+      events.push({ t, type: lastOverall ? 'end' : lastOfLevel ? 'level' : 'beep' });
+    }
+  });
+  return { countdown: cd, distance: dist, events, segments, duration: t };
+}
+
+function getState(tl, e) {
+  if (e < tl.countdown) return { phase: 'countdown', remaining: tl.countdown - e };
+  if (e >= tl.duration) return { phase: 'done', seg: tl.segments[tl.segments.length - 1] };
+  const seg = tl.segments.find((s) => e >= s.start && e < s.end);
+  return { phase: 'run', seg, frac: (e - seg.start) / (seg.end - seg.start),
+    left: seg.end - e, covered: seg.distanceEnd - tl.distance };
+}
+
+// Läuferposition 0..1; Richtung wechselt mit jedem Shuttle über alle Level
+function lanePosition(st) {
+  if (st.phase === 'countdown') return 0;
+  const frac = st.phase === 'run' ? st.frac : 1;
+  return st.seg.index % 2 === 1 ? frac : 1 - frac;
+}
+
+/* ------------------------- Speicher ------------------------- */
+
+const KEY_SEQ = 'beeptest.sequences.v1';
+const KEY_SET = 'beeptest.settings.web.v1';
+
+function makeSequence(p = {}) {
+  const gen = { startSpeed: 8.5, step: 0.5, levelSeconds: 60, levelCount: 21, ...(p.gen || {}) };
+  const distance = p.distance ?? 20;
+  return {
+    id: p.id ?? String(Date.now()) + Math.random().toString(36).slice(2, 6),
+    name: p.name ?? 'Neue Sequenz',
+    distance,
+    countdown: p.countdown ?? 10,
+    gen,
+    levels: p.levels ?? generateLevels({ ...gen, distance }),
+  };
+}
+
+const presets = () => [
+  makeSequence({ name: 'Beep Test 20 m (Tabelle, 8 Stufen)', distance: 20, countdown: 10,
+    gen: { startSpeed: 8.5, step: 0.5, levelSeconds: 60, levelCount: 8 },
+    levels: [[8.5,7],[9,8],[9.5,8],[10,8],[10.5,9],[11,9],[11.5,10],[12,10]].map(([speed, shuttles]) => ({ speed, shuttles })) }),
+  makeSequence({ name: 'Beep Test 20 m (21 Level)', distance: 20, gen: { startSpeed: 8.5, step: 0.5, levelSeconds: 60, levelCount: 21 } }),
+  makeSequence({ name: 'Einsteiger 20 m', distance: 20, gen: { startSpeed: 7.0, step: 0.5, levelSeconds: 60, levelCount: 15 } }),
+];
+
+const store = {
+  get(key, fallback) { try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; } catch (e) { return fallback; } },
+  set(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignorieren */ } },
+};
+
+let seqs = store.get(KEY_SEQ, null) || presets();
+let settings = { beepVolume: 1, ...store.get(KEY_SET, {}) };
+const saveSeqs = () => store.set(KEY_SEQ, seqs);
+const saveSettings = () => store.set(KEY_SET, settings);
+saveSeqs();
+
+/* ------------------------- Audio ------------------------- */
+
+let ctx = null;
+let silentEl = null;
+
+// Muss in einem Tipp-Ereignis aufgerufen werden (iOS schaltet Audio erst dann frei).
+function unlockAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* ignorieren */ }
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state !== 'running') ctx.resume();
+  // Stummes <audio> in Endlosschleife: iOS behandelt die Seite dann als Medienwiedergabe
+  // und spielt Töne auch bei aktivem Stumm-Schalter.
+  if (!silentEl) {
+    const n = 8000, b = new DataView(new ArrayBuffer(44 + n * 2));
+    const w = (o, s) => [...s].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+    w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); b.setUint32(16, 16, true);
+    b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, 8000, true); b.setUint32(28, 16000, true);
+    b.setUint16(32, 2, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true);
+    silentEl = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+    silentEl.loop = true;
+  }
+  silentEl.play().catch(() => {});
+}
+
+// Töne: Folge von [Frequenz Hz, Start s, Dauer s]
+const TONES = {
+  beep: [[1000, 0, 0.35]],
+  level: [[1000, 0, 0.15], [1250, 0.25, 0.15]],
+  end: [[800, 0, 0.2], [1000, 0.3, 0.2], [1100, 0.6, 0.6]],
+};
+const TONE_OF = { tick: 'beep', beep: 'beep', level: 'level', start: 'level', end: 'end' };
+
+// when: Zeitpunkt auf der AudioContext-Uhr (sample-genau, unabhängig vom JS-Timer)
+function playTone(type, when) {
+  if (!ctx) return;
+  const vol = settings.beepVolume;
+  for (const [f, off, dur] of TONES[TONE_OF[type]]) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = f;
+    const t0 = when + off;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.005);
+    g.gain.setValueAtTime(vol, t0 + dur - 0.01);
+    g.gain.linearRampToValueAtTime(0, t0 + dur);
+    o.connect(g).connect(ctx.destination);
+    o.start(t0);
+    o.stop(t0 + dur + 0.02);
+  }
+}
+
+/* ------------------------- Ansichten ------------------------- */
+
+const app = document.getElementById('app');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let runner = null; // laufender Test
+
+function show(html) { app.innerHTML = html; window.scrollTo(0, 0); }
+
+function viewList() {
+  stopRun();
+  show(`
+    <div class="row" style="margin-top:0"><h1 style="flex:2">Beep Test</h1>
+      <button class="sm o c-text" id="bSet" style="flex:1">Einstellungen</button></div>
+    ${seqs.map((q) => {
+      const tl = buildTimeline(q);
+      return `<div class="card"><h2>${esc(q.name)}</h2>
+        <div class="dim">${q.distance} m · ${q.levels.length} Level · ${fmtTime(tl.duration)} Gesamtdauer</div>
+        <div class="row"><button data-run="${q.id}">Start</button><button class="o c-text" data-edit="${q.id}">Bearbeiten</button></div>
+        <div class="row"><button class="sm o c-dim" data-dup="${q.id}">Duplizieren</button><button class="sm o c-danger" data-del="${q.id}">Löschen</button></div>
+      </div>`;
+    }).join('')}
+    <button class="o" id="bNew" style="width:100%">+ Neue Sequenz</button>`);
+  const find = (id) => seqs.find((x) => x.id === id);
+  app.querySelectorAll('[data-run]').forEach((b) => b.onclick = () => { unlockAudio(); viewRun(find(b.dataset.run)); });
+  app.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => viewEdit(find(b.dataset.edit)));
+  app.querySelectorAll('[data-dup]').forEach((b) => b.onclick = () => {
+    const q = find(b.dataset.dup);
+    seqs.push(makeSequence({ ...q, id: undefined, name: q.name + ' (Kopie)' })); saveSeqs(); viewList();
+  });
+  app.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => {
+    const q = find(b.dataset.del);
+    if (confirm(`„${q.name}“ löschen?`)) { seqs = seqs.filter((x) => x.id !== q.id); saveSeqs(); viewList(); }
+  });
+  document.getElementById('bNew').onclick = () => viewEdit(makeSequence());
+  document.getElementById('bSet').onclick = viewSettings;
+}
+
+function viewSettings() {
+  const draw = () => {
+    const pct = Math.round(settings.beepVolume * 100);
+    show(`<h1>Einstellungen</h1>
+      <div class="card"><h2>Beep-Lautstärke</h2>
+        <div class="dim">Relativ zur Lautstärke des Handys (Tasten seitlich). Auf dem iPhone darf der Stumm-Schalter an sein.</div>
+        <div class="row"><button class="sm o c-text" id="vm">−</button><div class="vol">${pct} %</div><button class="sm o c-text" id="vp">+</button></div>
+        <div class="row"><button class="sm o c-warn" id="vt">Testton</button></div>
+      </div>
+      <button id="back" style="width:100%">Zurück</button>`);
+    const setVol = (p) => { settings.beepVolume = Math.min(100, Math.max(0, p)) / 100; saveSettings(); draw(); };
+    document.getElementById('vm').onclick = () => setVol(pct - 10);
+    document.getElementById('vp').onclick = () => setVol(pct + 10);
+    document.getElementById('vt').onclick = () => { unlockAudio(); playTone('level', ctx.currentTime + 0.05); };
+    document.getElementById('back').onclick = viewList;
+  };
+  draw();
+}
+
+function viewEdit(seq) {
+  const g = { ...seq.gen };
+  let levels = seq.levels.map((l) => ({ speed: String(l.speed), shuttles: String(l.shuttles) }));
+  const val = (id) => document.getElementById(id).value;
+
+  const readLevels = () => levels.map((l, i) => ({
+    speed: num(document.getElementById('sp' + i).value),
+    shuttles: Math.round(num(document.getElementById('sh' + i).value)),
+  }));
+  const draw = () => {
+    show(`<h1>Sequenz bearbeiten</h1>
+      <div class="field"><label>Name</label><input type="text" id="name" value="${esc(seq.name)}"></div>
+      <div class="row"><div class="field"><label>Distanz (m)</label><input type="text" inputmode="decimal" id="dist" value="${seq.distance}"></div>
+        <div class="field"><label>Countdown (s)</label><input type="text" inputmode="numeric" id="cd" value="${seq.countdown}"></div></div>
+      <div class="card"><h2>Generator</h2>
+        <div class="row"><div class="field"><label>Start (km/h)</label><input type="text" inputmode="decimal" id="g1" value="${g.startSpeed}"></div>
+          <div class="field"><label>Steigerung (km/h)</label><input type="text" inputmode="decimal" id="g2" value="${g.step}"></div></div>
+        <div class="row"><div class="field"><label>Sek. pro Level</label><input type="text" inputmode="decimal" id="g3" value="${g.levelSeconds}"></div>
+          <div class="field"><label>Anzahl Level</label><input type="text" inputmode="numeric" id="g4" value="${g.levelCount}"></div></div>
+        <button class="o c-warn" id="gen" style="width:100%">Levels generieren</button>
+        <div class="dim" style="margin-top:6px">Überschreibt die Level-Liste.</div></div>
+      <h2 id="tot" style="font-size:18px"></h2>
+      <div class="lv dim"><span>Lv</span><span>km/h</span><span>Shuttles</span><span>Dauer</span><span></span></div>
+      ${levels.map((l, i) => `<div class="lv"><span class="dim">${i + 1}</span>
+        <input type="text" inputmode="decimal" id="sp${i}" value="${l.speed}">
+        <input type="text" inputmode="numeric" id="sh${i}" value="${l.shuttles}">
+        <span class="dim" id="du${i}"></span><button class="x" data-rm="${i}">✕</button></div>`).join('')}
+      <button class="sm o c-text" id="add" style="width:100%;margin-top:8px">+ Level hinzufügen</button>
+      <div class="row" style="margin:16px 0 40px"><button class="o c-dim" id="cancel">Abbrechen</button><button id="save">Speichern</button></div>`);
+    const upd = () => {
+      const dd = num(val('dist'));
+      let total = 0, ok = dd > 0;
+      readLevels().forEach((l, i) => {
+        const dur = l.speed > 0 && l.shuttles >= 1 && dd > 0 ? l.shuttles * (dd / (l.speed / 3.6)) : NaN;
+        document.getElementById('du' + i).textContent = isNaN(dur) ? '–' : fmtTime(dur);
+        if (isNaN(dur)) ok = false; else total += dur;
+      });
+      document.getElementById('tot').textContent = `Level (${levels.length}) · Gesamt ${ok ? fmtTime(total) : '–'}`;
+    };
+    app.querySelectorAll('input').forEach((el) => el.addEventListener('input', upd));
+    upd();
+    const sync = () => { levels = readLevels().map((l) => ({ speed: String(isNaN(l.speed) ? '' : l.speed), shuttles: String(isNaN(l.shuttles) ? '' : l.shuttles) }));
+      seq = { ...seq, name: val('name'), distance: val('dist'), countdown: val('cd') };
+      g.startSpeed = val('g1'); g.step = val('g2'); g.levelSeconds = val('g3'); g.levelCount = val('g4'); };
+    document.getElementById('gen').onclick = () => {
+      sync();
+      const p = { startSpeed: num(g.startSpeed), step: num(g.step), levelSeconds: num(g.levelSeconds),
+        levelCount: Math.round(num(g.levelCount)), distance: num(seq.distance) };
+      if (!(p.startSpeed > 0) || !(p.levelSeconds > 0) || !(p.levelCount >= 1) || !(p.distance > 0) || isNaN(p.step))
+        return alert('Start-km/h, Level-Dauer, Level-Anzahl und Distanz müssen > 0 sein.');
+      levels = generateLevels(p).map((l) => ({ speed: String(l.speed), shuttles: String(l.shuttles) }));
+      draw();
+    };
+    app.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { sync(); levels.splice(+b.dataset.rm, 1); draw(); });
+    document.getElementById('add').onclick = () => {
+      sync();
+      const last = levels[levels.length - 1];
+      const sp = last ? (num(last.speed) || 8) + (num(g.step) || 0.5) : 8.5;
+      levels.push({ speed: String(Math.round(sp * 100) / 100), shuttles: last ? last.shuttles : '8' });
+      draw();
+    };
+    document.getElementById('cancel').onclick = viewList;
+    document.getElementById('save').onclick = () => {
+      sync();
+      const parsed = readLevels();
+      const dd = num(seq.distance);
+      if (!String(seq.name).trim()) return alert('Name fehlt');
+      if (!(dd > 0) || !parsed.length || !parsed.every((l) => l.speed > 0 && l.shuttles >= 1))
+        return alert('Distanz > 0, mindestens ein Level, je Level Speed > 0 und Shuttles ≥ 1.');
+      const q = { ...seq, name: String(seq.name).trim(), distance: dd,
+        countdown: Math.max(0, Math.round(num(seq.countdown) || 0)),
+        gen: { startSpeed: num(g.startSpeed) || 8.5, step: isNaN(num(g.step)) ? 0.5 : num(g.step),
+          levelSeconds: num(g.levelSeconds) || 60, levelCount: Math.round(num(g.levelCount)) || parsed.length },
+        levels: parsed };
+      const i = seqs.findIndex((x) => x.id === q.id);
+      if (i >= 0) seqs[i] = q; else seqs.push(q);
+      saveSeqs(); viewList();
+    };
+  };
+  draw();
+}
+
+/* ------------------------- Lauf ------------------------- */
+
+function stopRun() {
+  if (!runner) return;
+  clearInterval(runner.timer);
+  if (runner.wake) { try { runner.wake.release(); } catch (e) { /* ignorieren */ } }
+  if (silentEl) silentEl.pause();
+  document.removeEventListener('visibilitychange', runner.onVis);
+  runner = null;
+}
+
+async function requestWake() {
+  try { if (navigator.wakeLock) return await navigator.wakeLock.request('screen'); } catch (e) { /* ignorieren */ }
+  return null;
+}
+
+function viewRun(seq) {
+  const tl = buildTimeline(seq);
+  const speeds = seq.levels.map((l) => l.speed);
+  const mn = Math.min(...speeds), mx = Math.max(...speeds);
+  const ctlFrac = seq.distance > 4 ? 2 / seq.distance : null;
+  show(`<div class="dim">${esc(seq.name)}</div>
+    <div class="center" id="info"></div>
+    <div class="lane" id="lane"><i class="t0"></i><i class="t1"></i>
+      ${ctlFrac !== null ? `<i class="c" style="left:${ctlFrac * 100}%"></i><i class="c" style="left:${(1 - ctlFrac) * 100}%"></i>` : ''}
+      <b id="dot"></b></div>
+    <div class="lbls"><span>Wendelinie</span><span style="color:var(--warn)">Kontrolllinie (2 m)</span><span>Wendelinie</span></div>
+    <div class="dim" style="text-align:center;margin-top:2px">${seq.distance} m</div>
+    <div class="strip" id="strip">${seq.levels.map((l) =>
+      `<div style="height:${10 + 30 * ((l.speed - mn) / (mx - mn || 1))}px"></div>`).join('')}</div>
+    <div class="lbls" style="justify-content:center;margin-top:4px">Level-Übersicht (Höhe = km/h)</div>
+    <div class="dim" id="time" style="text-align:center;margin-top:10px"></div>
+    <div class="row" style="margin-top:12px"><button class="f-warn" id="pause" style="border-color:var(--warn)">Pause</button>
+      <button class="o c-danger" id="exit">Beenden</button></div>`);
+
+  const info = document.getElementById('info'), dot = document.getElementById('dot');
+  const lane = document.getElementById('lane'), bars = document.getElementById('strip').children;
+  const pause = document.getElementById('pause');
+  const r = { running: false, base: 0, startCtx: 0, next: 0, timer: null, wake: null };
+  runner = r;
+  const el = () => r.base + (ctx.currentTime - r.startCtx);
+
+  const render = (e) => {
+    const st = getState(tl, e);
+    const lv = st.phase === 'countdown' ? 0 : st.seg.level;
+    if (st.phase === 'countdown') info.innerHTML = `<div class="dim">Start in</div><div class="huge">${Math.ceil(st.remaining)}</div>`;
+    else if (st.phase === 'run') info.innerHTML = `<div class="dim">LEVEL</div><div class="huge">${st.seg.level}</div>
+      <div class="big">Shuttle ${st.seg.shuttle} / ${st.seg.shuttles}</div><div class="mid">${st.seg.speed} km/h</div>
+      <div class="mid">${st.left.toFixed(1)} s bis zum Beep</div><div class="mid" style="margin-top:24px">${st.covered} m geschafft</div>`;
+    else info.innerHTML = `<div class="big">Fertig</div><div class="mid">Level ${st.seg.level} · ${st.seg.distanceEnd} m</div>`;
+    dot.style.left = lanePosition(st) * lane.clientWidth + 'px';
+    [...bars].forEach((b, i) => { b.style.background = i + 1 === lv ? 'var(--accent)' : i + 1 < lv ? 'var(--dim)' : 'var(--line)'; });
+    document.getElementById('time').textContent = `${fmtTime(e)} / ${fmtTime(tl.duration)}`;
+    return st;
+  };
+
+  const LOOKAHEAD = 0.3;
+  const tick = () => {
+    if (!r.running) return;
+    const e = el();
+    // Töne kurz im Voraus auf der Audio-Uhr einplanen
+    while (r.next < tl.events.length && tl.events[r.next].t <= e + LOOKAHEAD) {
+      const ev = tl.events[r.next++];
+      const when = r.startCtx + (ev.t - r.base);
+      if (when >= ctx.currentTime - 0.1) playTone(ev.type, Math.max(when, ctx.currentTime));
+    }
+    const st = render(e);
+    if (st.phase === 'done') { r.running = false; pause.style.display = 'none'; document.getElementById('exit').textContent = 'Zurück'; }
+  };
+
+  const start = async () => {
+    if (ctx.state !== 'running') await ctx.resume();
+    r.startCtx = ctx.currentTime;
+    r.running = true;
+    pause.textContent = 'Pause';
+    if (!r.wake) r.wake = await requestWake();
+  };
+  const halt = () => { r.base = el(); r.running = false; pause.textContent = 'Weiter'; };
+
+  pause.onclick = () => { unlockAudio(); r.running ? halt() : start(); };
+  document.getElementById('exit').onclick = viewList;
+  // Wake Lock wird beim Verlassen der Seite freigegeben: bei Rückkehr neu anfordern.
+  r.onVis = async () => { if (document.visibilityState === 'visible' && runner === r && r.running) r.wake = await requestWake(); };
+  document.addEventListener('visibilitychange', r.onVis);
+
+  render(0);
+  r.timer = setInterval(tick, 40);
+  start();
+}
+
+viewList();
+</script>
+</body>
+</html>
